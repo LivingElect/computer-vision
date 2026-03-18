@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 
 class DoubleConv(nn.Module):
-    """(卷积 => 批归一化 => ReLU) * 2次，提取特征的经典小模块"""
+    # ... (保持原来的 DoubleConv 不变) ...
     def __init__(self, in_channels, out_channels):
         super().__init__()
         self.double_conv = nn.Sequential(
@@ -13,7 +13,6 @@ class DoubleConv(nn.Module):
             nn.BatchNorm2d(out_channels),
             nn.ReLU(inplace=True)
         )
-
     def forward(self, x):
         return self.double_conv(x)
 
@@ -21,65 +20,39 @@ class UNet(nn.Module):
     def __init__(self, num_classes=20):
         super(UNet, self).__init__()
         
-        # ==========================================
-        # 1. 骨干网络 (Backbone) - 疯狂提取特征
-        # ==========================================
         self.inc = DoubleConv(3, 64)
         self.down1 = nn.Sequential(nn.MaxPool2d(2), DoubleConv(64, 128))
         self.down2 = nn.Sequential(nn.MaxPool2d(2), DoubleConv(128, 256))
         self.down3 = nn.Sequential(nn.MaxPool2d(2), DoubleConv(256, 512))
         
-        # 🌟 降维打击：全局平均池化。
-        # 不管输入的特征图有多大，强行压缩成 1x1，将其变成“单目标检测器”
-        self.pool = nn.AdaptiveAvgPool2d((1, 1))
+        # ❌ 删除了极其暴力的 AdaptiveAvgPool2d 和 Flatten
         
-        # ==========================================
-        # 2. 解耦头 (Decoupled Heads) - 大厂标配
-        # ==========================================
-        # 头 A：专门猜这是什么车 (分类)
-        self.cls_head = nn.Sequential(
-            nn.Flatten(),
-            nn.Linear(512, 256),
-            nn.ReLU(),
-            nn.Dropout(0.5), # 训练时随机断开神经元，防止死记硬背
-            nn.Linear(256, num_classes) # 输出形状: [Batch, 20]
-        )
+        # 🌟 换成 1x1 卷积头！它能在不破坏图像空间结构的情况下，改变通道数。
+        # 头 A：分类头
+        self.cls_head = nn.Conv2d(512, num_classes, kernel_size=1) 
         
-        # 头 B：专门猜这辆车在哪 (坐标框回归)
-        self.box_head = nn.Sequential(
-            nn.Flatten(),
-            nn.Linear(512, 256),
-            nn.ReLU(),
-            nn.Linear(256, 4), # 输出形状: [Batch, 4] 分别是 xmin, ymin, xmax, ymax
-            nn.ReLU() # 坐标不能是负数，加个 ReLU 兜底保平安
-        )
+        # 头 B：回归头
+        self.box_head = nn.Conv2d(512, 4, kernel_size=1)
 
     def forward(self, x):
-        # 1. 图像进入骨干网络
         x1 = self.inc(x)
         x2 = self.down1(x1)
         x3 = self.down2(x2)
-        x4 = self.down3(x3)
+        x4 = self.down3(x3) 
         
-        # 2. 压缩成高维特征向量 [Batch, 512, 1, 1]
-        feat = self.pool(x4)
+        # 此时 x4 的形状大概是 [Batch, 512, 32, 32] (假设输入是 256x256)
         
-        # 3. 特征向量分别流向两个不同的“脑区”
-        cls_preds = self.cls_head(feat) # 吐出分类打分
-        box_preds = self.box_head(feat) # 吐出坐标数值
+        # 吐出密集预测结果
+        cls_preds = self.cls_head(x4) # 形状: [Batch, 20, 32, 32]
+        box_preds = self.box_head(x4) # 形状: [Batch, 4, 32, 32]
         
-        # 👑 极其致命的一行：必须且只能交出这两个变量！(解决你报错的罪魁祸首)
+        # 🔄 极其关键的“降维重组”：把 32x32 的网格展平，变成 1024 个候选框
+        # [Batch, 20, 32, 32] -> [Batch, 20, 1024] -> [Batch, 1024, 20]
+        cls_preds = cls_preds.flatten(2).permute(0, 2, 1) 
+        box_preds = box_preds.flatten(2).permute(0, 2, 1)
+        
+        # 用 Sigmoid 强行把网络吐出的坐标死死压在 0 到 1 之间！绝对不允许越界爆炸！
+        box_preds = torch.sigmoid(box_preds)
+        
+        # 最终交出去的数据结构：1024 个框，每个框有 20 个类别的打分和 4 个坐标
         return cls_preds, box_preds
-
-# ==========================================
-# 本地测试代码 (仅用于验证模型有没有写错，不会在 train.py 中运行)
-# ==========================================
-if __name__ == '__main__':
-    # 模拟一张 256x256 的伪造图片送入网络
-    dummy_input = torch.randn(2, 3, 256, 256)
-    model = UNet(num_classes=20)
-    
-    cls_out, box_out = model(dummy_input)
-    print("模型测试成功！")
-    print(f"分类头输出形状: {cls_out.shape} -> 期望是 [2, 20]")
-    print(f"回归头输出形状: {box_out.shape} -> 期望是 [2, 4]")

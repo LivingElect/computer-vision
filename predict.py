@@ -55,52 +55,63 @@ def predict():
     ])
     input_tensor = transform(pil_img).unsqueeze(0).to(device) # 增加 Batch 维度
 
-    # 4. 前向传播 (核心推理)
-    with torch.no_grad(): # 🌟 开启“省电模式”：不计算梯度
+   # ... (前面的加载模型和读取图片代码保持不变) ...
+
+    # 4. 前向传播 (此时网络会吐出 1024 个框)
+    with torch.no_grad():
         cls_logits, box_preds = model(input_tensor)
         
-        # 处理分类结果
-        probs = torch.softmax(cls_logits[0], dim=0)
-        score, class_idx = torch.max(probs, dim=0)
-        label = VOC_CLASSES[class_idx.item()]
+        # 取出单张图片的结果: [1024, 20] 和 [1024, 4]
+        cls_preds_single = cls_logits[0]
+        box_preds_single = box_preds[0]
         
-        # 处理坐标结果 (256x256 尺度下的坐标)
-        pred_box = box_preds[0].cpu().numpy()
+        # 把分类 Logit 变成概率
+        probs = torch.sigmoid(cls_preds_single) 
+        max_scores, class_indices = torch.max(probs, dim=-1)
 
-    # 5. 坐标逆向还原 (从 256 还原到原始图片像素)
-    scale_x, scale_y = orig_w / 256.0, orig_h / 256.0
-    real_box = [
-        pred_box[0] * scale_x, pred_box[1] * scale_y,
-        pred_box[2] * scale_x, pred_box[3] * scale_y
-    ]
+    # 5. 🌟 真正的 NMS 大清洗开始！
+    
+    # 步骤 A：粗筛 (置信度过滤)。先把得分低于 0.3 的垃圾框直接物理抹杀
+    score_threshold = 0.3
+    mask = max_scores > score_threshold
+    
+    surviving_boxes = box_preds_single[mask]     # 活下来的坐标
+    surviving_scores = max_scores[mask]          # 活下来的分数
+    surviving_classes = class_indices[mask]      # 活下来的类别
+    
+    print(f"🧹 粗筛后，1024 个框还剩 {len(surviving_boxes)} 个")
 
-    # 6. 🌟 模拟 NMS 流程
-    # 既然是实验，我们围绕预测框生成 5 个伪随机冗余框，测试 NMS 是否生效
-    boxes = [real_box]
-    scores = [score.item()]
-    for _ in range(4): # 制造 4 个干扰项
-        noise = np.random.randint(-10, 10, size=4)
-        boxes.append([real_box[0]+noise[0], real_box[1]+noise[1], real_box[2]+noise[2], real_box[3]+noise[3]])
-        scores.append(score.item() * 0.9) # 干扰项分数稍低
+    if len(surviving_boxes) == 0:
+        print("❌ 没有检测到任何置信度大于 0.3 的目标。")
+    else:
+        # 步骤 B：坐标还原到原图比例
+        scale_x, scale_y = orig_w / 256.0, orig_h / 256.0
+        # 广播机制缩放所有活下来的框
+        surviving_boxes[:, 0] *= orig_w
+        surviving_boxes[:, 1] *= orig_h
+        surviving_boxes[:, 2] *= orig_w
+        surviving_boxes[:, 3] *= orig_h
+        
+        # 步骤 C：精筛 (手写 NMS 登场！)，解决重叠问题
+        iou_threshold = 0.45
+        # ⚠️ 注意：如果你之前的 metrics.py 里的 nms 函数期望的是 CPU tensor，这里加上 .cpu()
+        keep_indices = nms(surviving_boxes.cpu(), surviving_scores.cpu(), iou_threshold)
+        print(f"🎉 NMS 清场后，最终剩余 {len(keep_indices)} 个真实目标！")
 
-    # 转换成张量喂给 NMS
-    t_boxes = torch.tensor(boxes, dtype=torch.float32)
-    t_scores = torch.tensor(scores, dtype=torch.float32)
-    keep_indices = nms(t_boxes, t_scores, iou_threshold=0.5)
+        # 6. OpenCV 渲染结果
+        for idx in keep_indices:
+            b = surviving_boxes[idx].cpu().numpy().astype(int)
+            score = surviving_scores[idx].item()
+            label_name = VOC_CLASSES[surviving_classes[idx].item()]
+            
+            cv2.rectangle(raw_img, (b[0], b[1]), (b[2], b[3]), (0, 255, 0), 2)
+            cv2.putText(raw_img, f"{label_name} {score:.2f}", (b[0], b[1]-10), 
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
 
-    # 7. OpenCV 渲染结果
-    print(f"✅ 检测完成！结果：{label} (置信度: {score.item():.2f})")
-    for idx in keep_indices:
-        b = t_boxes[idx].numpy().astype(int)
-        cv2.rectangle(raw_img, (b[0], b[1]), (b[2], b[3]), (0, 255, 0), 2)
-        cv2.putText(raw_img, f"{label} {scores[idx]:.2f}", (b[0], b[1]-10), 
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
-
-    # 显示结果
-    save_path = "result_output.jpg"
+    # 7. 存盘 (应对 Linux 服务器无界面的情况)
+    save_path = "result_output_nms.jpg"
     cv2.imwrite(save_path, raw_img)
     print(f"🚀 结果已成功保存至: {os.path.abspath(save_path)}")
-    cv2.destroyAllWindows()
 
 if __name__ == '__main__':
     predict()
