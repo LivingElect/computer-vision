@@ -1,0 +1,28 @@
+# PASCAL VOC2012 数据集配置文件
+# 井号是注释，YAML 会自动忽略
+
+dataset_name: "VOC2012"
+nc: 20  # number of classes (类别总数)
+
+# 类别名称列表 (严格按顺序列出，Python 读取后会自动变成 List)
+names:
+  - aeroplane
+  - bicycle
+  - bird
+  - boat
+  - bottle
+  - bus
+  - car
+  - cat
+  - chair
+  - cow
+  - diningtable
+  - dog
+  - horse
+  - motorbike
+  - person
+  - pottedplant
+  - sheep
+  - sofa
+  - train
+  - tvmonitor

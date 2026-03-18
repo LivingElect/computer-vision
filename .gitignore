@@ -1,0 +1,25 @@
+# 数据集目录（包含大型文件）
+data/
+
+# 模型权重目录
+checkpoints/
+
+# Python编译文件
+__pycache__/
+*.pyc
+
+# 环境文件
+.env
+venv/
+env/
+
+# IDE配置文件
+.vscode/
+.idea/
+
+# 操作系统文件
+.DS_Store
+Thumbs.db
+
+# 日志文件
+*.log
