@@ -1,8 +1,5 @@
 # 数据集目录（包含大型文件）
-data/
-
-# 模型权重目录
-checkpoints/
+data/VOCdevkit/
 
 # Python编译文件
 __pycache__/

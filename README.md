@@ -58,7 +58,7 @@ pip install torch torchvision tqdm pyyaml
 1. 下载VOC2012数据集：
    - 从[官方网站](http://host.robots.ox.ac.uk/pascal/VOC/voc2012/)下载VOC2012数据集
    - 解压到`data/VOCdevkit/VOC2012/`目录
-
+   - Downloading ../data/VOCtrainval\_11-May-2012.tar from <http://d2l-data.s3-accelerate.amazonaws.com/VOCtrainval_11-May-2012.tar>
 2. 数据集结构：
    - `JPEGImages/`：包含原始图像
    - `SegmentationClass/`：包含语义分割标注
